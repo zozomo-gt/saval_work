@@ -245,6 +245,67 @@ body{
 .legend{display:flex;gap:14px;margin-bottom:14px;flex-wrap:wrap}
 .li{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--text3)}
 .ld2{width:8px;height:8px;border-radius:50%}
+
+/* ── MEMO ── */
+.size-row{flex-wrap:wrap;gap:8px}
+.memo-area{flex:1;display:flex;align-items:center;min-width:60px}
+.memo-add-btn{
+  background:transparent;border:1px dashed var(--border2);
+  border-radius:6px;padding:4px 10px;font-size:11px;
+  color:var(--text3);font-family:inherit;cursor:pointer;
+  white-space:nowrap;transition:all .15s;
+}
+.memo-add-btn:active{border-color:var(--accent);color:var(--accent)}
+.memo-tag{
+  background:rgba(245,158,11,.15);border:1px solid rgba(245,158,11,.3);
+  border-radius:6px;padding:4px 10px;font-size:11px;
+  color:var(--low);cursor:pointer;max-width:100%;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:'Noto Sans KR',sans-serif;
+}
+.memo-tag:active{opacity:.7}
+
+/* ── MEMO MODAL ── */
+.memo-modal-bg{
+  position:fixed;inset:0;z-index:200;
+  background:rgba(0,0,0,.6);
+  display:flex;align-items:flex-end;justify-content:center;
+  opacity:0;pointer-events:none;transition:opacity .2s;
+}
+.memo-modal-bg.open{opacity:1;pointer-events:all}
+.memo-modal{
+  width:100%;max-width:500px;
+  background:var(--surf);border-radius:20px 20px 0 0;
+  padding:0 0 calc(env(safe-area-inset-bottom,0px) + 16px);
+  transform:translateY(100%);transition:transform .3s cubic-bezier(.4,0,.2,1);
+}
+.memo-modal-bg.open .memo-modal{transform:translateY(0)}
+.memo-handle{width:36px;height:4px;background:var(--border2);border-radius:2px;margin:12px auto 0}
+.memo-modal-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:14px 16px 10px;
+}
+.memo-modal-head h3{font-size:14px;font-weight:600}
+.memo-modal-label{font-size:12px;color:var(--text2);padding:0 16px 8px}
+.memo-input{
+  width:calc(100% - 32px);margin:0 16px;
+  background:var(--surf2);border:1px solid var(--border2);
+  border-radius:var(--rs);padding:12px 14px;
+  font-size:15px;font-family:inherit;color:var(--text);
+  outline:none;
+}
+.memo-input:focus{border-color:var(--accent)}
+.memo-actions{display:flex;gap:10px;padding:12px 16px 0}
+.memo-save-btn{
+  flex:1;padding:12px;background:var(--accent);color:#fff;
+  border:none;border-radius:var(--rs);font-size:14px;
+  font-family:inherit;font-weight:500;cursor:pointer;
+}
+.memo-delete-btn{
+  padding:12px 16px;background:transparent;color:var(--minus);
+  border:1px solid rgba(239,68,68,.3);border-radius:var(--rs);
+  font-size:13px;font-family:inherit;cursor:pointer;
+}
 </style>
 </head>
 <body>
@@ -286,10 +347,30 @@ body{
   </div>
 </div>
 
+
+<!-- MEMO MODAL -->
+<div class="memo-modal-bg" id="memo-modal-bg" onclick="closeMemoIfBg(event)">
+  <div class="memo-modal">
+    <div class="memo-handle"></div>
+    <div class="memo-modal-head">
+      <h3 id="memo-modal-title">메모</h3>
+      <button class="memo-delete-btn" onclick="deleteMemo()" id="memo-del-btn" style="border:none;background:none;color:var(--text3);font-size:12px;font-family:inherit;cursor:pointer">삭제</button>
+    </div>
+    <div class="memo-modal-label" id="memo-modal-label"></div>
+    <input class="memo-input" id="memo-input" type="text" placeholder="메모를 입력하세요..." maxlength="30">
+    <div class="memo-actions">
+      <button class="memo-save-btn" onclick="saveMemo()">저장</button>
+    </div>
+  </div>
+</div>
+
 <script>
 // ── 데이터 ────────────────────────────────────────────
 const INVENTORY_KEY = 'printstar_inventory_v1';
 const UPDATED_KEY   = 'printstar_updated_v1';
+const MEMO_KEY      = 'printstar_memo_v1';
+
+let memos = {}; // key: "ci-color-sz" → string
 
 const DEFAULT_DATA = [
   {
@@ -346,6 +427,7 @@ let inventory = [], logs = [], currentCat = 0;
 function saveToStorage() {
   try {
     localStorage.setItem(INVENTORY_KEY, JSON.stringify(inventory));
+    localStorage.setItem(MEMO_KEY, JSON.stringify(memos));
     const now = new Date();
     localStorage.setItem(UPDATED_KEY, now.toISOString());
     updateTimestamp(now);
@@ -359,6 +441,7 @@ function loadFromStorage() {
       inventory = JSON.parse(saved);
       const ts = localStorage.getItem(UPDATED_KEY);
       if (ts) updateTimestamp(new Date(ts));
+      try { const sm = localStorage.getItem(MEMO_KEY); if(sm) memos=JSON.parse(sm); } catch(e){}
       return true;
     }
   } catch(e) {}
@@ -388,12 +471,17 @@ function buildUI() {
       const sizeRows = cat.sizes.map(sz => {
         const q = cat.data[color][sz] || 0;
         const cls = q===0?'zero':q<=3?'low':'';
+        const memoKey = `${ci}-${color}-${sz}`;
+        const memoVal = memos[memoKey] || '';
         return `<div class="size-row" id="srow-${ci}-${color}-${sz}">
           <div class="size-label">${sz}</div>
           <div class="qty-ctrl">
             <button class="qbtn minus" onclick="adjust(${ci},'${color}','${sz}',-1)">−</button>
             <div class="qnum ${cls}" id="num-${ci}-${color}-${sz}">${q}</div>
             <button class="qbtn plus"  onclick="adjust(${ci},'${color}','${sz}',1)">+</button>
+          </div>
+          <div class="memo-area" id="memo-area-${memoKey}">
+            ${memoVal ? `<div class="memo-tag" onclick="openMemo(${ci},'${color}','${sz}')">${memoVal}</div>` : `<button class="memo-add-btn" onclick="openMemo(${ci},'${color}','${sz}')">+메모</button>`}
           </div>
         </div>`;
       }).join('');
@@ -548,6 +636,74 @@ function downloadExcel() {
 // ── PWA SERVICE WORKER ───────────────────────────────
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
+
+
+// ── MEMO ─────────────────────────────────────────────
+let currentMemoKey = null;
+
+function openMemo(ci, color, sz) {
+  currentMemoKey = `${ci}-${color}-${sz}`;
+  const cat = inventory[ci];
+  document.getElementById('memo-modal-title').textContent = '메모';
+  document.getElementById('memo-modal-label').textContent = `${cat.name} · ${color} · ${sz}`;
+  document.getElementById('memo-input').value = memos[currentMemoKey] || '';
+  document.getElementById('memo-modal-bg').classList.add('open');
+  setTimeout(() => document.getElementById('memo-input').focus(), 350);
+}
+
+function closeMemoIfBg(e) {
+  if (e.target === document.getElementById('memo-modal-bg')) closeMemoModal();
+}
+function closeMemoModal() {
+  document.getElementById('memo-modal-bg').classList.remove('open');
+  currentMemoKey = null;
+}
+
+function saveMemo() {
+  if (!currentMemoKey) return;
+  const val = document.getElementById('memo-input').value.trim();
+  if (val) {
+    memos[currentMemoKey] = val;
+  } else {
+    delete memos[currentMemoKey];
+  }
+  saveToStorage();
+  updateMemoUI(currentMemoKey, val);
+  closeMemoModal();
+}
+
+function deleteMemo() {
+  if (!currentMemoKey) return;
+  delete memos[currentMemoKey];
+  saveToStorage();
+  updateMemoUI(currentMemoKey, '');
+  closeMemoModal();
+}
+
+function updateMemoUI(key, val) {
+  // key = "ci-color-sz"
+  const parts = key.split('-');
+  const ci = parts[0];
+  // color might have dash? no — use full key structure
+  // rebuild from inventory
+  inventory.forEach((cat, cIdx) => {
+    if (String(cIdx) !== ci) return;
+    cat.colors.forEach(color => {
+      cat.sizes.forEach(sz => {
+        const k = `${cIdx}-${color}-${sz}`;
+        if (k !== key) return;
+        const areaId = `memo-area-${cIdx}-${color}-${sz}`;
+        const el = document.getElementById(areaId);
+        if (!el) return;
+        if (val) {
+          el.innerHTML = `<div class="memo-tag" onclick="openMemo(${cIdx},'${color}','${sz}')">${val}</div>`;
+        } else {
+          el.innerHTML = `<button class="memo-add-btn" onclick="openMemo(${cIdx},'${color}','${sz}')">+메모</button>`;
+        }
+      });
+    });
+  });
 }
 
 // ── INIT ─────────────────────────────────────────────
